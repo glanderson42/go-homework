@@ -1,11 +1,12 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"time"
 
-	"github.com/appleboy/gin-jwt"
 	jwtmiddleware "github.com/auth0/go-jwt-middleware"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
@@ -15,13 +16,20 @@ import (
 
 // User is represents a user data structure
 type User struct {
-	ID       int    `gorm:"AUTO_INCREMENT" form:"id" json:"id"`
+	ID       uint   `gorm:"AUTO_INCREMENT" form:"id" json:"id"`
 	Username string `gorm:"not null" form:"username" json:"username"`
 	Password string `gorm:"not null" form:"password" json:"password"`
 }
 
+type BlogEntity struct {
+	ID        uint   `gorm:"AUTO_INCREMENT" form:"id" json:"id"`
+	Content   string `gorm:"not null" form:"content" json:"content"`
+	UserID    uint   `gorm:"foreignkey:ID"`
+	CreatedAt time.Time
+}
+
 const (
-	API_KEY = "blogengine"
+	API_KEY = "blogenginesecretkey"
 )
 
 // InitDb is for database init
@@ -36,6 +44,11 @@ func InitDb() *gorm.DB {
 	if !db.HasTable(&User{}) {
 		db.CreateTable(&User{})
 		db.Set("gorm:table_options", "ENGINE=InnoDB").CreateTable(&User{})
+	}
+
+	if !db.HasTable(&BlogEntity{}) {
+		db.CreateTable(&BlogEntity{})
+		db.Set("gorm:table_options", "ENGINE=InnoDB").CreateTable(&BlogEntity{})
 	}
 
 	return db
@@ -55,6 +68,25 @@ func indexGetMethod(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{ "message": "home get" }`))
 }
 
+func PostBlogEntity(c *gin.Context) {
+	db := InitDb()
+	defer db.Close()
+
+	var blogEntity BlogEntity
+	c.Bind(&blogEntity)
+	db.Create(&blogEntity)
+}
+
+func GetBlogEntities(c *gin.Context) {
+	db := InitDb()
+	defer db.Close()
+
+	var blogEntities BlogEntity
+	db.Find(&blogEntities)
+
+	c.JSON(200, blogEntities)
+}
+
 // PostUser is...
 func PostUser(c *gin.Context) {
 	db := InitDb()
@@ -64,34 +96,23 @@ func PostUser(c *gin.Context) {
 	c.Bind(&user)
 
 	if user.Username != "" && user.Password != "" {
-		// INSERT INTO "users" (name) VALUES (user.Name);
 		db.Create(&user)
-		// Display error
 		c.JSON(201, gin.H{"success": user})
 
 	} else {
-		// Display error
 		c.JSON(422, gin.H{"error": "Fields are empty"})
 	}
-
-	// curl -i -X POST -H "Content-Type: application/json" -d "{ \"firstname\": \"Thea\", \"lastname\": \"Queen\" }" http://localhost:8080/api/v1/users
 }
 
 // GetUsers is...
 func GetUsers(c *gin.Context) {
-	// Connection to the database
 	db := InitDb()
-	// Close connection database
 	defer db.Close()
 
 	var users []User
-	// SELECT * FROM users
 	db.Find(&users)
 
-	// Display JSON result
 	c.JSON(200, users)
-
-	// curl -i http://localhost:8080/api/v1/users
 }
 
 // AuthUser is for authing user
@@ -122,7 +143,20 @@ func AuthUser(c *gin.Context) {
 	}
 }
 
-func AuthMiddleware(next gin.HandlerFunc) http.Handler {
+func ExampleHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Content-Type", "application/json")
+	io.WriteString(w, `{"status":"ok"}`)
+	decoder := json.NewDecoder(r.Body)
+	var user User
+	err := decoder.Decode(&user)
+	if err != nil {
+		panic(err)
+	}
+	log.Println(user.Username)
+
+}
+
+func AuthMiddleware(next http.Handler) http.Handler {
 	if len(API_KEY) == 0 {
 		log.Fatal("HTTP SERVER UNABLE TO START")
 	}
@@ -145,7 +179,10 @@ func main() {
 	{
 		v1.POST("/users", PostUser)
 		v1.GET("/users", GetUsers)
-		v1.POST("/auth", AuthUser)
+		v1.POST("/login", AuthUser)
+		v1.GET("/authtest", gin.WrapH(AuthMiddleware(http.HandlerFunc(ExampleHandler))))
+		v1.POST("/blogentity", PostBlogEntity)
+		v1.GET("/blogentities", GetBlogEntities)
 	}
 	log.Fatal(router.Run(":8080"))
 }
